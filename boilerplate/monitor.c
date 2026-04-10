@@ -40,6 +40,14 @@
  *   - include `struct list_head` linkage
  * ============================================================== */
 
+struct monitored_entry {
+    pid_t pid;
+    char container_id[MONITOR_NAME_LEN];
+    unsigned long soft_limit_bytes;
+    unsigned long hard_limit_bytes;
+    int soft_warned;          /* 1 after the first soft-limit warning */
+    struct list_head list; 
+}
 
 /* ==============================================================
  * TODO 2: Declare the global monitored list and a lock.
@@ -51,7 +59,8 @@
  * You may choose either a mutex or a spinlock, but your README must
  * justify the choice in terms of the code paths you implemented.
  * ============================================================== */
-
+static LIST_HEAD(monitored_list);
+static DEFINE_MUTEX(list_mutex);
 
 /* --- Provided: internal device / timer state --- */
 static struct timer_list monitor_timer;
@@ -143,6 +152,46 @@ static void timer_callback(struct timer_list *t)
      *   - enforce hard limit and then remove the entry
      *   - avoid use-after-free while deleting during iteration
      * ============================================================== */
+    struct monitored_entry *entry, *tmp;
+    long rss;
+ 
+    /* Try to take the lock without sleeping (timer runs in softirq) */
+    if (!mutex_trylock(&list_mutex))
+        goto reschedule;
+ 
+    list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
+        rss = get_rss_bytes(entry->pid);
+ 
+        if (rss < 0) {
+            /* Process no longer exists — clean up its entry */
+            printk(KERN_INFO
+                   "[container_monitor] container=%s pid=%d exited, removing\n",
+                   entry->container_id, entry->pid);
+            list_del(&entry->list);
+            kfree(entry);
+            continue;
+        }
+ 
+        if ((unsigned long)rss >= entry->hard_limit_bytes) {
+            /* HARD LIMIT: kill the process and remove entry */
+            kill_process(entry->container_id, entry->pid,
+                         entry->hard_limit_bytes, rss);
+            list_del(&entry->list);
+            kfree(entry);
+            continue;
+        }
+        if ((unsigned long)rss >= entry->soft_limit_bytes
+                && !entry->soft_warned) {
+            /* SOFT LIMIT: warn once */
+            log_soft_limit_event(entry->container_id, entry->pid,
+                                 entry->soft_limit_bytes, rss);
+            entry->soft_warned = 1;
+        }
+    }
+ 
+    mutex_unlock(&list_mutex);
+ 
+reschedule:
 
     mod_timer(&monitor_timer, jiffies + CHECK_INTERVAL_SEC * HZ);
 }
