@@ -218,7 +218,8 @@ static long monitor_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
     if (cmd == MONITOR_REGISTER) {
         printk(KERN_INFO
                "[container_monitor] Registering container=%s pid=%d soft=%lu hard=%lu\n",
-               req.container_id, req.pid, req.soft_limit_bytes, req.hard_limit_bytes);
+               req.container_id, req.pid, req.soft_limit_bytes, req.hard_limit_bytes,
+               req.soft_limit_bytes,req.hard_limit_bytes);
 
         /* ==============================================================
          * TODO 4: Add a monitored entry.
