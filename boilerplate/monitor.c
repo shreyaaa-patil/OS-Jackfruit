@@ -337,7 +337,7 @@ static int __init monitor_init(void)
 /* --- Provided: Module Exit --- */
 static void __exit monitor_exit(void)
 {
-    struct monitored_entry *entry, *
+    struct monitored_entry *entry, *tmp;
     del_timer_sync(&monitor_timer);
 
     /* ==============================================================
