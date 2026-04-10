@@ -252,71 +252,71 @@ The metadata record tracks the full container lifecycle: STARTING -> RUNNING -> 
 
 This project uses two separate IPC mechanisms as required:
 
-**Logging (pipes):** Each container's stdout and stderr are connected to the write-end of a pipe via `dup2()`. The supervisor holds the read-end. A dedicated pipe-reader thread per container reads chunks from the pipe and pushes them into the bounded buffer. The bounded buffer sits between these producer threads and a single consumer (the logger thread), which pops chunks and appends them to per-container log files.
+**Logging (pipes):** Each container's stdout and stderr are connected to the write-end of a pipe via dup(). The supervisor holds the read-end. A dedicated pipe reader thread per container reads chunks from the pipe and pushes them into the bounded buffer. The bounded buffer exists between this producer threads and a single consumer (logger thread), which pops chunks and add them to the per container log files.
 
-The bounded buffer uses a `pthread_mutex_t` to protect the head, tail, and count fields. Without it, two producer threads could both read `count = 15` (one slot free), both decide to push, and corrupt the buffer by writing to the same slot. We use two `pthread_cond_t` variables: `not_full` (producers wait here when the buffer is full) and `not_empty` (the consumer waits here when the buffer is empty). `pthread_cond_wait` atomically releases the mutex and sleeps, which eliminates the race between checking the condition and sleeping.
+The bounded buffer uses a pthread_mutex_t to protect the head, tail, and count fields. Without it, two producer threads could both read count = 15, both decide to push, and corrupt the buffer by writing to the same slot. We use two pthread_cond_t, variables: 1. not_full-producers wait here when the buffer is full 2.  not_empty- the consumer waits here when the buffer is empty. pthread_cond_wait atomically releases the mutex and sleeps, which avoids race condition between checking the condition and sleeping.
 
-**Control (UNIX domain socket):** CLI clients connect to `/tmp/mini_runtime.sock`, send a fixed-size `control_request_t` struct, and receive a fixed-size `control_response_t` struct back. The `metadata_lock` mutex protects the container linked list accessed from both the socket handler (main thread) and the SIGCHLD handler.
+**Control (UNIX domain socket):** CLI clients connect to /tmp/mini_runtime.sock, send a fixed-size control_request_t struct, and receive a fixed-size control_response_t struct back. The metadata_lock mutex protects the container linked list accessed from both the socket handler (main thread) and the SIGCHLD handler.
 
-The reason we use a mutex for the list and not a spinlock is that the ioctl and socket handler paths can sleep (they call `malloc`, `send`, `recv`). Spinlocks must never sleep — they busy-wait and are only appropriate for very short critical sections in interrupt context.
+The reason we use a mutex for the list and not a spinlock is that the ioctl and socket handler paths can sleep (because they call malloc, send, recv). Spinlocks must never sleep, they busy-wait and are only appropriate for very small critical sections in interrupt cases.
 
 ### 4.4 Memory Management and Enforcement
 
-RSS (Resident Set Size) measures the number of physical RAM pages currently mapped and present for a process. It does not measure virtual memory (pages allocated but not yet touched), shared libraries counted once per process, or memory-mapped files that have been swapped out. In our kernel module, `get_mm_rss()` returns the actual physical page count for a PID's `mm_struct`, which we multiply by `PAGE_SIZE` to get bytes.
+RSS (Resident Set Size) measures the number of physical RAM pages currently mapped and present for a process. It does not measure virtual memory (pages allocated but not yet touched), shared libraries counted once per process, or memory-mapped files that have been swapped out. In our kernel module, get_mm_rss() returns the actual physical page count for a PID's mm_struct, which we multiply by PAGE_SIZE to get bytes.
 
 Soft and hard limits serve different purposes. The soft limit is a warning threshold — the process is allowed to continue but the operator is alerted. The hard limit is a termination threshold — the process is killed to protect the rest of the system. This two-tier design lets operators tune containers conservatively without immediately killing processes that have brief memory spikes.
 
-Enforcement belongs in kernel space because user-space enforcement is fundamentally unreliable. A user-space monitor could be scheduled away for hundreds of milliseconds while a container allocates memory explosively. A kernel timer fires with guaranteed periodicity relative to `jiffies`. Additionally, the kernel can access `mm_struct` directly and send signals atomically via `send_sig()`, without race conditions between checking and acting.
+Enforcement belongs in kernel space because user-space enforcement is fundamentally unreliable. A user-space monitor could be scheduled away for hundreds of milliseconds while a container allocates memory explosively. A kernel timer fires with guaranteed periodicity relative to jiffies. Additionally, the kernel can access mm_struct directly and send signals atomically via send_sig(), without race conditions between checking and acting.
 
 ### 4.5 Scheduling Behaviour
 
-Linux uses the Completely Fair Scheduler (CFS) as its default scheduler. CFS tracks a `vruntime` value for each runnable task — the total CPU time the task has consumed, weighted by its priority. The scheduler always picks the task with the smallest `vruntime`. Nice values adjust the weight: a process with nice=-5 gets roughly 3× the CPU share of a process with nice=10 on an otherwise idle system.
+Linux uses the Completely Fair Scheduler as its default scheduler. CFS tracks a vruntime value for each runnable task — the total CPU time the task has consumed, weighted by its priority. The scheduler always picks the task with the smallest vruntime. Nice values adjust the weight: a process with nice=-5 gets roughly 3x the CPU share of a process with nice=10 on an otherwise idle system.
 
-Our experiments (see Section 6) show this directly. Two `cpu_hog` processes running simultaneously — one at nice=-5, one at nice=10 — complete the same workload in measurably different times. The high-priority process finishes significantly faster because CFS selects it more often. The I/O-bound `io_pulse` process voluntarily sleeps between writes, so it yields the CPU frequently and has very low `vruntime` — it gets scheduled quickly when it wakes up regardless of its nice value, demonstrating the difference between CPU-bound and I/O-bound scheduling behaviour.
+Our project show this directly. Two cpu_hog processes running simultaneously — one at nice=-5, one at nice=10 — complete the same workload in measurably different times. The high-priority process finishes significantly faster because CFS selects it more often. The I/O-bound io_pulse process voluntarily sleeps between writes, so it yields the CPU frequently and has very low vruntime — it gets scheduled quickly when it wakes up regardless of its nice value, demonstrating the difference between CPU-bound and I/O-bound scheduling behaviour.
 
 ---
 
 ## 5. Design Decisions and Tradeoffs
 
-### Namespace isolation — `chroot` instead of `pivot_root`
+### Namespace isolation — chroot instead of pivot_root
 
-**Choice:** We use `chroot()` to isolate each container's filesystem view rather than the more thorough `pivot_root()`.
+**Choice:** We use chroot() to isolate each container's filesystem view rather than the more thorough pivot_root().
 
-**Tradeoff:** `chroot` can be escaped by a root process inside the container using `chroot("../../..")` tricks if the container is not further restricted. `pivot_root` fully replaces the root mount point and is harder to escape. However, `pivot_root` requires the new root to be a mount point itself, which adds setup complexity.
+**Tradeoff:** chroot can be escaped by a root process inside the container using chroot("../../..") tricks if the container is not further restricted. pivot_root fully replaces the root mount point and is harder to escape. However, pivot_root requires the new root to be a mount point itself, which adds setup complexity.
 
-**Justification:** For this project, `chroot` provides sufficient isolation to demonstrate the concept. Adding `pivot_root` would require creating a bind mount for each container's rootfs before launch, which adds steps that distract from the core learning goals.
+**Justification:** For this project, chroot provides sufficient isolation to demonstrate the concept. Adding pivot_root would require creating a bind mount for each container's rootfs before launch, which adds steps that distract from the core learning goals.
 
 ### Supervisor architecture — single-threaded event loop with a separate logger thread
 
-**Choice:** The supervisor's main loop handles one CLI connection at a time (sequential `accept` → `recv` → `respond`). A separate pthread handles all log writing.
+**Choice:** The supervisor's main loop handles one CLI connection at a time (sequential `accept` -> `recv` -> `respond`). A separate pthread handles all log writing.
 
-**Tradeoff:** The main loop is not concurrent — if one CLI command takes time (e.g., streaming a large log file), other CLI clients must wait. A multi-threaded or `epoll`-based design would handle this better at scale.
+**Tradeoff:** The main loop is not concurrent — if one CLI command takes time (e.g., streaming a large log file), other CLI clients must wait. A multi-threaded or epoll based design would handle this better at scale.
 
 **Justification:** For a project demonstrating concepts with a handful of containers, sequential handling is sufficient and much simpler to reason about correctly. The logger is correctly separated into its own thread because it does blocking file I/O that should not stall the control plane.
 
 ### IPC and logging — pipes for logging, UNIX socket for control
 
-**Choice:** Two separate IPC mechanisms: pipes carry container output to the supervisor (Path A), and a UNIX domain socket carries CLI commands to the supervisor (Path B).
+**Choice:** Two separate IPC mechanisms: pipes carry container output to the supervisor, and a UNIX domain socket carries CLI commands to the supervisor.
 
 **Tradeoff:** Using two mechanisms adds complexity compared to a single socket for everything. However, mixing control messages and log data on one channel would require framing/multiplexing logic.
 
-**Justification:** Pipes are the natural fit for streaming stdout/stderr — they are unidirectional, auto-close when the container exits (triggering EOF for the reader), and require no message framing. The socket is the natural fit for request/response control commands. Keeping them separate makes each path simpler and matches how real container runtimes (like containerd) are designed.
+**Justification:** Pipes are the natural fit for streaming stdout/stderr. they are unidirectional, auto-close when the container exits (triggering EOF for the reader), and require no message framing. The socket is the natural fit for request/response control commands. Keeping them separate makes each path simpler and matches how real container runtimes (like containerd) are designed.
 
 ### Kernel monitor — mutex over spinlock
 
-**Choice:** We protect the monitored process list with a `mutex` rather than a `spinlock`.
+**Choice:** We protect the monitored process list with a mutex rather than  spinlock.
 
-**Tradeoff:** A mutex can sleep, so it cannot be used in hard interrupt context. We use `mutex_trylock` in the timer callback (which runs in softirq context) to avoid blocking — if the lock is held we simply skip the tick. A spinlock would never sleep and would be safe in all contexts, but our `kmalloc(GFP_KERNEL)` in the register path can sleep, making a spinlock inappropriate there.
+**Tradeoff:** A mutex can sleep, so it cannot be used in hard interrupt context. We use mutex_trylock in the timer callback to avoid blocking — if the lock is held we simply skip the tick. A spinlock would never sleep and would be safe in all contexts, but our kmalloc(GFP_KERNEL) in the register path can sleep, making a spinlock inappropriate there.
 
-**Justification:** The ioctl path (register/unregister) needs `GFP_KERNEL` allocation which can sleep — a spinlock would be wrong here. Using a mutex everywhere and `trylock` in the timer is the cleaner solution. The one-second timer period makes a skipped tick completely acceptable.
+**Justification:** The ioctl path (register/unregister) needs GFP_KERNEL allocation which can sleep. Using a mutex everywhere and trylock in the timer is the cleaner solution. The one-second timer period makes a skipped tick completely acceptable.
 
-### Scheduling experiments — nice values via `setpriority` in child_fn
+### Scheduling experiments — nice values via setpriority in child_fn
 
-**Choice:** We apply nice values using the `nice()` syscall inside `child_fn` before `exec()`.
+**Choice:** We apply nice values using the nice() syscall inside child_fn before exec().
 
-**Tradeoff:** The nice value is applied after the process is already created and before exec. A more precise approach would use `sched_setattr` with explicit CFS weights, but that requires more privilege handling.
+**Tradeoff:** The nice value is applied after the process is already created and before exec. A more precise approach would use sched_setattr with CFS weights, but that requires more privilege handling.
 
-**Justification:** `nice()` is the standard POSIX interface for priority adjustment and is what the project guide specifies. It is sufficient to produce clearly observable differences in scheduling behaviour between containers.
+**Justification:** nice() is the standard POSIX interface for priority adjustment. It is enopugh to produce clearly observable differences in scheduling behaviour between containers.
 
 ---
 
@@ -324,29 +324,29 @@ Our experiments (see Section 6) show this directly. Two `cpu_hog` processes runn
 
 ### Experiment A — CPU-bound workloads at different priorities
 
-Two containers ran `cpu_hog 20` (20 seconds of CPU work) simultaneously. One was started with `--nice -5` (higher priority) and one with `--nice 10` (lower priority).
+Two containers ran cpu_hog 20 (20 seconds of CPU work) simultaneously. One was started with --nice -5(higher priority) and one with --nice 10 (lower priority).
 
 | Container | Nice value | Observed completion time |
 |-----------|-----------|--------------------------|
 | hi        | -5        | [ Fill in from your logs ] seconds |
 | lo        | 10        | [ Fill in from your logs ] seconds |
 
-**What this shows:** The high-priority container (nice=-5) received a larger share of CPU time from the Linux CFS scheduler. CFS uses weighted `vruntime` — a lower nice value means a higher weight, so the scheduler selects `hi` more often per scheduling period. The `lo` container still made progress (CFS guarantees no starvation) but took longer to complete the same work.
+**what is seen:** The high-priority container (nice=-5) received a larger share of CPU time from the Linux CFS scheduler. CFS uses weighted vruntime...a lower nice value means a higher weight, so the scheduler selects `high` more often per scheduling period. The `low` container still made progress but took too long to finish the task. CFS guarantees no starvation.
 
 ### Experiment B — CPU-bound vs I/O-bound at the same priority
 
-One container ran `cpu_hog 20` and another ran `io_pulse 20 100` (20 iterations with 100ms sleep between writes) simultaneously at the same nice value.
+One container ran cpu_hog 20 and another ran io_pulse 20 100 (20 iterations with 100ms sleep between writes) simultaneously at the same nice value.
 
 | Container | Workload type | Behaviour observed |
 |-----------|--------------|-------------------|
 | cpuwork   | CPU-bound    | Ran continuously, consumed full time slice each scheduling period |
 | iowork    | I/O-bound    | Slept frequently, woke up with low vruntime, responded quickly each time |
 
-**What this shows:** The I/O-bound process voluntarily gave up the CPU on every `usleep()` call. Because it was sleeping most of the time, its `vruntime` accumulated slowly. Each time it woke up, CFS scheduled it almost immediately (its `vruntime` was the smallest in the run queue). This demonstrates that CFS naturally gives good responsiveness to I/O-bound workloads without any explicit priority adjustment — the scheduler rewards processes that yield the CPU.
+**What is seen:** The I/O-bound process voluntarily gave up the CPU on every usleep() call. Because it was sleeping most of the time, its vruntime accumulated slowly. Each time it woke up, CFS scheduled it almost immediately because its vruntime was the smallest in the run queue. This demonstrates that CFS naturally gives good responsiveness to I/O bound workloads without any explicit priority adjustment, the scheduler rewards processes that yield the CPU.
 
 ### Summary
 
-The experiments confirm two fundamental CFS properties: (1) nice values shift CPU allocation predictably — lower nice = more CPU share — and (2) I/O-bound processes get better responsiveness than their nice value alone would suggest, because voluntary sleeping keeps their `vruntime` low. These properties are why web servers (I/O-bound) feel responsive on the same machine as compilation jobs (CPU-bound) with no manual priority tuning.
+The experiments confirm two fundamental CFS properties: 1. nice values shift CPU allocation predictably - lower nice = more CPU share. 2.  I/O-bound processes get better responsiveness than their nice value alone would suggest, because voluntary sleeping keeps their vruntime low. These properties are why web servers (I/O bound) feel responsive on the same machine as compilation jobs (CPU bound) with no manual priority tuning.
 
 ---
 
