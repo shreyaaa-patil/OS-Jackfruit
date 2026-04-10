@@ -274,6 +274,20 @@ static long monitor_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
      *   - return status indicating whether a matching entry was removed
      * ============================================================== */
 
+    mutex_lock(&list_mutex);
+    list_for_each_entry_safe(entry, tmp, &monitored_list, list) {
+        /* Match by PID (and optionally container_id for safety) */
+        if (entry->pid == req.pid &&
+            strncmp(entry->container_id, req.container_id,
+                    MONITOR_NAME_LEN) == 0) {
+            list_del(&entry->list);
+            kfree(entry);
+            mutex_unlock(&list_mutex);
+            return 0;
+        }
+    }
+    mutex_unlock(&list_mutex);
+
     return -ENOENT;
 }
 
