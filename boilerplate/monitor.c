@@ -152,7 +152,7 @@ static void timer_callback(struct timer_list *t)
      *   - enforce hard limit and then remove the entry
      *   - avoid use-after-free while deleting during iteration
      * ============================================================== */
-      struct monitored_entry *entry, *tmp;
+    struct monitored_entry *entry, *tmp;
     long rss;
  
     /* Try to take the lock without sleeping (timer runs in softirq) */
