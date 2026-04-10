@@ -555,6 +555,10 @@ static void dispatch_command(char *cmd_line, int out_fd) {
 /* ──────────────────────────────────────────────
  * SUPERVISOR MODE: listen on UNIX socket
  * ────────────────────────────────────────────── */
+static void handle_sigterm(int sig) {
+    (void)sig;
+    supervisor_running = 0;
+}
 static void run_supervisor(const char *rootfs_base) {
     printf("[supervisor] Starting. Base rootfs: %s\n", rootfs_base);
 
@@ -585,7 +589,7 @@ static void run_supervisor(const char *rootfs_base) {
     printf("[supervisor] Listening on %s\n", SOCK_PATH);
 
     /* handle SIGTERM for orderly shutdown */
-    signal(SIGTERM, [](int){ supervisor_running = 0; });
+    signal(SIGTERM, handle_sigterm);
 
     while (supervisor_running) {
         fd_set fds;
