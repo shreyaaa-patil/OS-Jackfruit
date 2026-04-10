@@ -229,7 +229,35 @@ static long monitor_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
          *   - validate allocation and limits
          *   - insert into the shared list under the chosen lock
          * ============================================================== */
-
+        
+    if (req.hard_limit_bytes < req.soft_limit_bytes) {
+            printk(KERN_WARNING
+                   "[container_monitor] Invalid limits for %s: hard < soft\n",
+                   req.container_id);
+            return -EINVAL;
+        }
+ 
+        /* Allocate a new list node.
+         * GFP_KERNEL means "normal allocation, can sleep" — fine in ioctl context. */
+        entry = kmalloc(sizeof(*entry), GFP_KERNEL);
+        if (!entry)
+            return -ENOMEM;
+ 
+        /* Fill in the node */
+        entry->pid              = req.pid;
+        entry->soft_limit_bytes = req.soft_limit_bytes;
+        entry->hard_limit_bytes = req.hard_limit_bytes;
+        entry->soft_warned      = 0;
+        /* strncpy into fixed-size buffer; -1 to guarantee null terminator */
+        strncpy(entry->container_id, req.container_id,
+                sizeof(entry->container_id) - 1);
+        entry->container_id[sizeof(entry->container_id) - 1] = '\0';
+ 
+        /* Insert at the head of the list (protected by mutex) */
+        mutex_lock(&list_mutex);
+        list_add(&entry->list, &monitored_list);
+        mutex_unlock(&list_mutex);    
+        
         return 0;
     }
 
