@@ -47,7 +47,7 @@ struct monitored_entry {
     unsigned long hard_limit_bytes;
     int soft_warned;          /* 1 after the first soft-limit warning */
     struct list_head list; 
-}
+};
 
 /* ==============================================================
  * TODO 2: Declare the global monitored list and a lock.
