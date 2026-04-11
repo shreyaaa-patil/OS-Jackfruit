@@ -59,7 +59,7 @@ struct monitored_entry {
  * You may choose either a mutex or a spinlock, but your README must
  * justify the choice in terms of the code paths you implemented.
  * ============================================================== */
-static LIST_HEAD(monitored_list);
+static struct list_head monitored_list = LIST_HEAD_INIT(monitored_list);
 static DEFINE_MUTEX(list_mutex);
 
 /* --- Provided: internal device / timer state --- */
