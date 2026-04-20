@@ -157,7 +157,7 @@ make clean
 
 ---
 
-### Screenshot 3 — Multi-container supervision
+### Screenshot 3 — Multi-container supervision (task 2--> start alpha command)
 
 ![Screenshot 3](results/s2.png)
 
@@ -165,7 +165,7 @@ make clean
 
 ---
 
-### Screenshot 4 — Metadata tracking (ps output)
+### Screenshot 4 — Metadata tracking (ps output) (task 1+ task 2--> engine ps command running)
 
 ![Screenshot 4](results/s3.png)
 
@@ -173,7 +173,7 @@ make clean
 
 ---
 
-### Screenshot 5 — Bounded-buffer logging
+### Screenshot 5 — Bounded-buffer logging (task 3)
 
 ![Screenshot 5](results/s4.png)
 
@@ -181,7 +181,7 @@ make clean
 
 ---
 
-### Screenshot 6 — CLI and IPC
+### Screenshot 6 — CLI and IPC (task 3 +task 2)
 
 ![Screenshot 6](results/s5.png)
 
@@ -189,7 +189,7 @@ make clean
 
 ---
 
-### Screenshot 7 — Soft-limit warning
+### Screenshot 7 — Soft-limit warning (task 4)
 
 ![Screenshot 7](results/s6.png)
 
@@ -197,7 +197,7 @@ make clean
 
 ---
 
-### Screenshot 8 — Hard-limit enforcement
+### Screenshot 8 — Hard-limit enforcement (task 4)
 
 ![Screenshot 8](results/s7.png)
 
@@ -205,7 +205,7 @@ make clean
 
 ---
 
-### Screenshot 9 — Scheduling experiment
+### Screenshot 9 — Scheduling experiment (task 5)
 
 ![Screenshot 9](results/s8.png)
 
@@ -215,7 +215,7 @@ make clean
 
 ---
 
-### Screenshot 10 — Clean teardown
+### Screenshot 10 — Clean teardown (task 6)
 
 ![Screenshot 10](results/s9.png)
 
